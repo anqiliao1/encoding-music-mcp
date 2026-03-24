@@ -31,4 +31,6 @@ mcp.tool(
     app=AppConfig(resource_uri="ui://notation/view.html"),
 )(show_notation)
 mcp.tool()(get_first_occurrence_melodic_ngrams)
-mcp.tool()(play_excerpt)
+mcp.tool(
+    app=AppConfig(resource_uri="ui://play_excerpt/view.html"),
+)(play_excerpt)

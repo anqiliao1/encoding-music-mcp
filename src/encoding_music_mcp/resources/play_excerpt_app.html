@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Play Excerpt</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <script type="module" src="https://cdn.jsdelivr.net/npm/html-midi-player@1.6.0/+esm"></script>
+
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #fff;
+        color: #111;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .meta {
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        padding: 8px 14px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background: #f7f7f7;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      #status {
+        font-size: 14px;
+        color: #444;
+      }
+
+      midi-player {
+        width: 100%;
+        max-width: 700px;
+      }
+
+      .small {
+        font-size: 13px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div id="meta" class="meta">Loading excerpt...</div>
+
+      <midi-player id="player" sound-font visualizer="#none"></midi-player>
+
+      <div class="controls">
+        <button id="playBtn" disabled>Play excerpt</button>
+        <button id="stopBtn" disabled>Stop</button>
+        <span id="status">Waiting for data...</span>
+      </div>
+
+      <div class="small" id="timing"></div>
+    </div>
+
+    <script type="module">
+      let stopTimer = null;
+
+      function stopPlayback(player, statusEl) {
+        if (stopTimer) {
+          clearInterval(stopTimer);
+          stopTimer = null;
+        }
+        player.stop();
+        statusEl.textContent = "Stopped";
+      }
+
+      function initApp(payload) {
+        const player = document.getElementById("player");
+        const playBtn = document.getElementById("playBtn");
+        const stopBtn = document.getElementById("stopBtn");
+        const statusEl = document.getElementById("status");
+        const metaEl = document.getElementById("meta");
+        const timingEl = document.getElementById("timing");
+
+        const {
+          filename,
+          midi_base64,
+          start_q,
+          end_q,
+          start_sec,
+          end_sec,
+          bpm
+        } = payload;
+
+        metaEl.textContent =
+          `File: ${filename} | Tempo: ${bpm} bpm`;
+
+        timingEl.textContent =
+          `Beats ${start_q} to ${end_q} | Seconds ${start_sec.toFixed(3)} to ${end_sec.toFixed(3)}`;
+
+        player.src = `data:audio/midi;base64,${midi_base64}`;
+
+        player.addEventListener("load", () => {
+          playBtn.disabled = false;
+          stopBtn.disabled = false;
+          statusEl.textContent = "Ready";
+        });
+
+        playBtn.addEventListener("click", () => {
+          try {
+            if (stopTimer) {
+              clearInterval(stopTimer);
+              stopTimer = null;
+            }
+
+            player.stop();
+            player.currentTime = start_sec;
+            player.start();
+            statusEl.textContent = "Playing...";
+
+            stopTimer = setInterval(() => {
+              if (!player.playing || player.currentTime >= end_sec) {
+                stopPlayback(player, statusEl);
+              }
+            }, 50);
+          } catch (err) {
+            console.error(err);
+            statusEl.textContent = `Error: ${err}`;
+          }
+        });
+
+        stopBtn.addEventListener("click", () => {
+          stopPlayback(player, statusEl);
+        });
+      }
+
+      function getStructuredContent() {
+        const maybePayload =
+          window.structuredContent ||
+          window.toolResult?.structured_content ||
+          window.toolResult?.structuredContent ||
+          null;
+
+        return maybePayload;
+      }
+
+      const payload = getStructuredContent();
+
+      if (!payload) {
+        document.getElementById("status").textContent =
+          "No structured content received.";
+      } else {
+        initApp(payload);
+      }
+    </script>
+  </body>
+</html>
