@@ -32,13 +32,13 @@ def notation_viewer() -> str:
     return _notation_html_path.read_text(encoding="utf-8")
 
 @mcp.resource(
-    "ui://play_excerpt/view.html",
+    "ui://play_excerpt/v2.html",
     name="Excerpt Player",
-    description="Interactive MIDI excerpt player",
+    description="Interactive audio excerpt player",
     app=AppConfig(
         csp=ResourceCSP(
             resource_domains=[
-                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
             ],
         ),
     ),

@@ -1,173 +1,108 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Play Excerpt</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      font: 16px sans-serif;
+      box-sizing: border-box;
+    }
+    .meta {
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    audio {
+      width: 100%;
+      max-width: 720px;
+    }
+    #status {
+      margin-top: 10px;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="meta" id="meta">Connecting...</div>
+  <audio id="player" controls preload="metadata"></audio>
+  <div id="status">Waiting for tool result...</div>
 
-    <script type="module" src="https://cdn.jsdelivr.net/npm/html-midi-player@1.6.0/+esm"></script>
+  <script type="module">
+    import { App } from "https://unpkg.com/@modelcontextprotocol/ext-apps@0.4.0/app-with-deps";
 
-    <style>
-      body {
-        font-family: sans-serif;
-        margin: 0;
-        padding: 16px;
-        background: #fff;
-        color: #111;
+    const meta = document.getElementById("meta");
+    const player = document.getElementById("player");
+    const status = document.getElementById("status");
+
+    const app = new App({ name: "Play Excerpt", version: "1.0.0" });
+
+    function log(msg) {
+      status.textContent = msg;
+      console.log(msg);
+    }
+
+    function tryParseJsonObjectFromText(text) {
+      const trimmed = text.trim();
+
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        return JSON.parse(trimmed);
       }
 
-      .container {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
+      const firstBrace = trimmed.indexOf("{");
+      const lastBrace = trimmed.lastIndexOf("}");
+
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        const candidate = trimmed.slice(firstBrace, lastBrace + 1);
+        return JSON.parse(candidate);
       }
 
-      .meta {
-        font-size: 14px;
-        line-height: 1.5;
+      throw new Error("Tool text did not contain a JSON object");
+    }
+
+    function extractPayload(content, structuredContent) {
+      if (structuredContent && typeof structuredContent === "object") {
+        return structuredContent;
       }
 
-      .controls {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
+      const textItem = content?.find(c => c.type === "text" && typeof c.text === "string");
+      if (!textItem) {
+        throw new Error("No usable tool content found");
       }
 
-      button {
-        padding: 8px 14px;
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        background: #f7f7f7;
-        cursor: pointer;
-      }
+      return tryParseJsonObjectFromText(textItem.text);
+    }
 
-      button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
+    app.ontoolresult = ({ content, structuredContent }) => {
+      try {
+        const payload = extractPayload(content, structuredContent);
 
-      #status {
-        font-size: 14px;
-        color: #444;
-      }
-
-      midi-player {
-        width: 100%;
-        max-width: 700px;
-      }
-
-      .small {
-        font-size: 13px;
-        color: #666;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="container">
-      <div id="meta" class="meta">Loading excerpt...</div>
-
-      <midi-player id="player" sound-font visualizer="#none"></midi-player>
-
-      <div class="controls">
-        <button id="playBtn" disabled>Play excerpt</button>
-        <button id="stopBtn" disabled>Stop</button>
-        <span id="status">Waiting for data...</span>
-      </div>
-
-      <div class="small" id="timing"></div>
-    </div>
-
-    <script type="module">
-      let stopTimer = null;
-
-      function stopPlayback(player, statusEl) {
-        if (stopTimer) {
-          clearInterval(stopTimer);
-          stopTimer = null;
+        if (!payload.audio_base64) {
+          throw new Error("Missing audio_base64 in payload");
         }
-        player.stop();
-        statusEl.textContent = "Stopped";
+
+        meta.textContent =
+          `${payload.filename} | beats ${payload.start_q} to ${payload.end_q} | ${payload.bpm} bpm`;
+
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+
+        player.src = `data:${payload.mime_type};base64,${payload.audio_base64}`;
+        log("Audio loaded");
+      } catch (err) {
+        log("Failed to parse tool output: " + err.message);
       }
+    };
 
-      function initApp(payload) {
-        const player = document.getElementById("player");
-        const playBtn = document.getElementById("playBtn");
-        const stopBtn = document.getElementById("stopBtn");
-        const statusEl = document.getElementById("status");
-        const metaEl = document.getElementById("meta");
-        const timingEl = document.getElementById("timing");
-
-        const {
-          filename,
-          midi_base64,
-          start_q,
-          end_q,
-          start_sec,
-          end_sec,
-          bpm
-        } = payload;
-
-        metaEl.textContent =
-          `File: ${filename} | Tempo: ${bpm} bpm`;
-
-        timingEl.textContent =
-          `Beats ${start_q} to ${end_q} | Seconds ${start_sec.toFixed(3)} to ${end_sec.toFixed(3)}`;
-
-        player.src = `data:audio/midi;base64,${midi_base64}`;
-
-        player.addEventListener("load", () => {
-          playBtn.disabled = false;
-          stopBtn.disabled = false;
-          statusEl.textContent = "Ready";
-        });
-
-        playBtn.addEventListener("click", () => {
-          try {
-            if (stopTimer) {
-              clearInterval(stopTimer);
-              stopTimer = null;
-            }
-
-            player.stop();
-            player.currentTime = start_sec;
-            player.start();
-            statusEl.textContent = "Playing...";
-
-            stopTimer = setInterval(() => {
-              if (!player.playing || player.currentTime >= end_sec) {
-                stopPlayback(player, statusEl);
-              }
-            }, 50);
-          } catch (err) {
-            console.error(err);
-            statusEl.textContent = `Error: ${err}`;
-          }
-        });
-
-        stopBtn.addEventListener("click", () => {
-          stopPlayback(player, statusEl);
-        });
-      }
-
-      function getStructuredContent() {
-        const maybePayload =
-          window.structuredContent ||
-          window.toolResult?.structured_content ||
-          window.toolResult?.structuredContent ||
-          null;
-
-        return maybePayload;
-      }
-
-      const payload = getStructuredContent();
-
-      if (!payload) {
-        document.getElementById("status").textContent =
-          "No structured content received.";
-      } else {
-        initApp(payload);
-      }
-    </script>
-  </body>
+    try {
+      await app.connect();
+      log("Connected. Waiting for tool result...");
+    } catch (err) {
+      log("Connect error: " + err.message);
+    }
+  </script>
+</body>
 </html>
