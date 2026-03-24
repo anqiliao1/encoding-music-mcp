@@ -1,0 +1,9 @@
+from music21 import converter
+
+filepath = 'my\Bach_BWV_0772.mei'
+score = converter.parse(str(filepath))
+key_analysis = score.analyze("key")
+analysis_dict = {
+        "Key Name": str(key_analysis),
+        "Confidence Factor": key_analysis.correlationCoefficient,
+}
