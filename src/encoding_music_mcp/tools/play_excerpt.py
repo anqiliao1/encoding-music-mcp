@@ -1,5 +1,4 @@
 import base64
-import json
 import re
 import shutil
 import subprocess
@@ -14,13 +13,33 @@ from mcp.types import TextContent
 from .helpers import get_mei_filepath
 
 _VEROVIO_RESOURCE_PATH = str(Path(verovio.__file__).parent / "data")
+
+# A SoundFont is needed by FluidSynth to turn MIDI into actual audio.
 _SOUNDFONT_PATH = Path(__file__).resolve().parent.parent / "resources" / "GeneralUser-GS.sf2"
+
+# Defines a fallback location for the FluidSynth executable on Windows. (use `where.exe fluidsynth`)
 _FALLBACK_FLUIDSYNTH_EXE = Path(r"C:\ProgramData\chocolatey\bin\fluidsynth.exe")
 
 __all__ = ["play_excerpt"]
 
 
 def _inject_or_replace_tempo(mei_text: str, bpm: int) -> str:
+    """Insert a tempo marking into MEI text or replace an existing MIDI tempo.
+
+    If the MEI already contains a ``midi.bpm="..."`` attribute, this function
+    replaces its first occurrence with the requested BPM value. Otherwise, it
+    inserts a ``<tempo>`` element immediately after the first ``<measure>`` tag.
+
+    Args:
+        mei_text : str
+            The MEI document as a string.
+        bpm : int
+            The tempo in beats per minute.
+
+    Returns:
+        str
+            The modified MEI text with the requested tempo.
+    """
     if 'midi.bpm="' in mei_text:
         return re.sub(
             r'midi\.bpm="\d+(\.\d+)?"',
@@ -38,6 +57,20 @@ def _inject_or_replace_tempo(mei_text: str, bpm: int) -> str:
 
 
 def _create_toolkit(mei_data: str) -> verovio.toolkit:
+    """Create and initialise a Verovio toolkit from MEI data.
+
+    Args:
+        mei_data : str
+            The MEI document as a string.
+
+    Returns:
+        verovio.toolkit
+            A Verovio toolkit loaded with the given MEI data.
+
+    Raises:
+        ValueError
+            If Verovio fails to load the MEI data.
+    """
     tk = verovio.toolkit()
     tk.setResourcePath(_VEROVIO_RESOURCE_PATH)
     if not tk.loadData(mei_data):
@@ -46,6 +79,19 @@ def _create_toolkit(mei_data: str) -> verovio.toolkit:
 
 
 def _find_fluidsynth_executable() -> Path:
+    """Locate the FluidSynth executable.
+
+    The function first looks for ``fluidsynth`` on the system PATH. If it is
+    not found, it falls back to a predefined Windows installation path.
+
+    Returns:
+        Path
+            The path to the FluidSynth executable.
+
+    Raises:
+        FileNotFoundError
+            If FluidSynth cannot be found in either location.
+    """
     exe = shutil.which("fluidsynth")
     if exe:
         return Path(exe)
@@ -61,6 +107,24 @@ def _find_fluidsynth_executable() -> Path:
 
 
 def _render_midi_b64_to_wav_file(midi_b64: str, wav_path: Path) -> None:
+    """Render a base64-encoded MIDI file to WAV using FluidSynth.
+
+    The MIDI data are decoded, written to a temporary ``.mid`` file, and then
+    synthesised to a WAV file using the configured SoundFont and FluidSynth
+    executable.
+
+    Parameters:
+        midi_b64 : str
+            Base64-encoded MIDI data.
+        wav_path : Path
+            Output path for the rendered WAV file.
+
+    Raises:
+        FileNotFoundError
+            If the SoundFont or FluidSynth executable cannot be found.
+        RuntimeError
+            If FluidSynth fails or does not produce the WAV file.
+    """
     if not _SOUNDFONT_PATH.exists():
         raise FileNotFoundError(
             f"SoundFont not found at {_SOUNDFONT_PATH}. "
@@ -108,6 +172,23 @@ def _render_midi_b64_to_wav_file(midi_b64: str, wav_path: Path) -> None:
 
 
 def _trim_wav_file(input_wav: Path, output_wav: Path, start_sec: float, end_sec: float) -> None:
+    """Trim a time interval from a WAV file and save it as a new WAV file.
+
+    Parameters:
+        input_wav : Path
+            Path to the source WAV file.
+        output_wav : Path
+            Path where the trimmed WAV file will be written.
+        start_sec : float
+            Start time of the excerpt in seconds.
+        end_sec : float
+            End time of the excerpt in seconds.
+
+    Raises:
+        ValueError
+            If ``end_sec`` is not greater than ``start_sec``, or if the excerpt is
+            empty after clamping to the audio duration.
+    """
     if end_sec <= start_sec:
         raise ValueError("end_sec must be greater than start_sec")
 
@@ -143,15 +224,54 @@ def _trim_wav_file(input_wav: Path, output_wav: Path, start_sec: float, end_sec:
 
 
 def _wav_file_to_b64(wav_path: Path) -> str:
+    """Encode a WAV file as a base64 ASCII string.
+
+    Parameters:
+        wav_path : Path
+            Path to the WAV file.
+
+    Returns:
+        str
+            Base64-encoded WAV data.
+    """
     return base64.b64encode(wav_path.read_bytes()).decode("ascii")
 
 
 def play_excerpt(
-    filename: str,
-    start_q: float,
-    end_q: float,
-    bpm: int = 60,
+    filename: str, start_q: float, end_q: float, bpm: int = 60,
 ) -> ToolResult:
+    """Render an MEI file to audio and return a requested excerpt.
+
+    The function reads the MEI file, injects or replaces its tempo, renders it
+    to MIDI with Verovio, synthesises the MIDI to WAV with FluidSynth, trims
+    the requested time interval, and returns the excerpt as base64-encoded WAV
+    data in the tool result.
+
+    The end time is extended slightly before trimming so that the rendered audio
+    does not cut off the final note too early.
+
+    Parameters:
+        filename : str
+            Name of the MEI file to load.
+        start_q : float
+            Start position of the excerpt in quarter-note units.
+        end_q : float
+            End position of the excerpt in quarter-note units.
+        bpm : int, default=60
+            Playback tempo in beats per minute.
+
+    Returns:
+        ToolResult
+            A tool result containing a text message and structured payload with the
+            audio excerpt and related metadata.
+
+    Raises:
+        ValueError
+            If ``end_q`` is not greater than ``start_q`` or if ``bpm`` is not
+            positive.
+        FileNotFoundError
+            If the MEI file does not exist.
+    """
     if end_q <= start_q:
         raise ValueError("end_q must be greater than start_q")
     if bpm <= 0:
@@ -168,7 +288,8 @@ def play_excerpt(
     midi_b64 = tk.renderToMIDI()
 
     start_sec = start_q * 60.0 / bpm
-    end_sec = (end_q+0.25) * 60.0 / bpm
+    # Add a small buffer to avoid cutting off the final note too early
+    end_sec = (end_q + 0.25) * 60.0 / bpm
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
